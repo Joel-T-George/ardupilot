@@ -410,7 +410,7 @@ void AP_CRSF_Telem::adjust_packet_weight(bool queue_empty)
 // WFQ scheduler
 bool AP_CRSF_Telem::is_packet_ready(uint8_t idx, bool queue_empty)
 {
-    if (!process_rf_mode_changes()) {
+    if (!process_rf_mode_changes() && !_bind_request_pending) {
         return false;
     }
 
@@ -980,11 +980,11 @@ uint16_t AP_CRSF_Telem::get_altitude_packed()
 int8_t AP_CRSF_Telem::get_vertical_speed_packed()
 {
     float vspeed = get_vspeed_ms();
-    float vertical_speed_cm_s = vspeed * 100.0f;
+    float vertical_speed_cms = vspeed * 100.0f;
     const int16_t Kl = 100; // linearity constant;
     const float Kr = 0.026f; // range constant;
-    int8_t vspeed_packed = int8_t(logf(fabsf(vertical_speed_cm_s)/Kl + 1)/Kr);
-    return vspeed_packed * (is_negative(vertical_speed_cm_s) ? -1 : 1);
+    int8_t vspeed_packed = int8_t(logf(fabsf(vertical_speed_cms)/Kl + 1)/Kr);
+    return vspeed_packed * (is_negative(vertical_speed_cms) ? -1 : 1);
 }
 
 // prepare vario data

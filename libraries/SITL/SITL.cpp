@@ -332,7 +332,20 @@ const AP_Param::GroupInfo SIM::var_info2[] = {
     // @User: Advanced
     AP_GROUPINFO("WOW_PIN",     25, SIM,  wow_pin, -1),
 
-    // vibration frequencies on each axis
+    // @Param: VIB_FREQ_X
+    // @DisplayName: Vibration frequency
+    // @Description: Frequency of vibration applied to IMU readings in SITL
+    // @Units: Hz
+
+    // @Param: VIB_FREQ_Y
+    // @DisplayName: Vibration frequency
+    // @Description: Frequency of vibration applied to IMU readings in SITL
+    // @Units: Hz
+
+    // @Param: VIB_FREQ_Z
+    // @DisplayName: Vibration frequency
+    // @Description: Frequency of vibration applied to IMU readings in SITL
+    // @Units: Hz
     AP_GROUPINFO("VIB_FREQ",   26, SIM,  vibe_freq, 0),
 
     // @Group: PARA_
@@ -533,7 +546,9 @@ const AP_Param::GroupInfo SIM::var_info3[] = {
     // @Description: Scenario for thermalling simulation, for soaring
     AP_GROUPINFO("THML_SCENARI",  12, SIM,  thermal_scenario, 0),
 
-    // Buyoancy for submarines
+    // @Param{Sub}: BUOYANCY
+    // @DisplayName: Buoyancy
+    // @Description: Buyoancy for submarines
     AP_GROUPINFO_FRAME("BUOYANCY", 15, SIM, buoyancy, 1, AP_PARAM_FRAME_SUB),
 
     // @Param: RATE_HZ
@@ -745,6 +760,12 @@ const AP_Param::GroupInfo SIM::var_mag[] = {
     // @Description: Scaling factor for simulated vibration from motors
     // @User: Advanced
     AP_GROUPINFO("MAG_RND",        1, SIM,  mag_noise,   0),
+    // @Param: MAG_MOT
+    // @DisplayName: Motor magnetic interference
+    // @Description: Simulates distortion of magnetometer readings caused by motor current
+    // @Units: mGauss/A
+    // @User: Advanced
+    // @Vector3Parameter: 1
     AP_GROUPINFO("MAG_MOT",        2, SIM,  mag_mot, 0),
     // @Param: MAG_DELAY
     // @DisplayName: Mag measurement delay
@@ -753,6 +774,12 @@ const AP_Param::GroupInfo SIM::var_mag[] = {
     // @User: Advanced
     AP_GROUPINFO("MAG_DELAY",      3, SIM,  mag_delay, 0),
     AP_GROUPINFO("MAG1_OFS",        4, SIM,  mag_ofs[0], 0),
+    // @Param: MAG_ALY
+    // @DisplayName: NED anomaly vector at ground level
+    // @Description: Simulates localized magnetic field distortions at ground level that decays with altitude.
+    // @Units: mGauss
+    // @User: Advanced
+    // @Vector3Parameter: 1
     AP_GROUPINFO("MAG_ALY",        5, SIM,  mag_anomaly_ned, 0),
     // @Param: MAG_ALY_HGT
     // @DisplayName: Magnetic anomaly height
@@ -760,7 +787,35 @@ const AP_Param::GroupInfo SIM::var_mag[] = {
     // @Units: m
     // @User: Advanced
     AP_GROUPINFO("MAG_ALY_HGT",    6, SIM,  mag_anomaly_hgt, 1.0f),
+    // @Param: MAG1_DIA_X
+    // @DisplayName: Magnetometer soft-iron diagonal X component
+    // @Description: DIA_X in the magnetometer soft-iron calibration matrix: [[DIA_X, ODI_X, ODI_Y], [ODI_X, DIA_Y, ODI_Z], [ODI_Y, ODI_Z, DIA_Z]]
+    // @User: Advanced
+
+    // @Param: MAG1_DIA_Y
+    // @DisplayName: Magnetometer soft-iron diagonal Y component
+    // @Description: DIA_Y in the magnetometer soft-iron calibration matrix: [[DIA_X, ODI_X, ODI_Y], [ODI_X, DIA_Y, ODI_Z], [ODI_Y, ODI_Z, DIA_Z]]
+    // @User: Advanced
+
+    // @Param: MAG1_DIA_Z
+    // @DisplayName: Magnetometer soft-iron diagonal Z component
+    // @Description: DIA_Z in the magnetometer soft-iron calibration matrix: [[DIA_X, ODI_X, ODI_Y], [ODI_X, DIA_Y, ODI_Z], [ODI_Y, ODI_Z, DIA_Z]]
+    // @User: Advanced
     AP_GROUPINFO("MAG1_DIA",        7, SIM,  mag_diag[0], 0),
+    // @Param: MAG1_ODI_X
+    // @DisplayName: Magnetometer soft-iron off-diagonal X component
+    // @Description: ODI_X in the magnetometer soft-iron calibration matrix: [[DIA_X, ODI_X, ODI_Y], [ODI_X, DIA_Y, ODI_Z], [ODI_Y, ODI_Z, DIA_Z]]
+    // @User: Advanced
+
+    // @Param: MAG1_ODI_Y
+    // @DisplayName: Magnetometer soft-iron off-diagonal Y component
+    // @Description: ODI_Y in the magnetometer soft-iron calibration matrix: [[DIA_X, ODI_X, ODI_Y], [ODI_X, DIA_Y, ODI_Z], [ODI_Y, ODI_Z, DIA_Z]]
+    // @User: Advanced
+
+    // @Param: MAG1_ODI_Z
+    // @DisplayName: Magnetometer soft-iron off-diagonal Z component
+    // @Description: ODI_Z in the magnetometer soft-iron calibration matrix: [[DIA_X, ODI_X, ODI_Y], [ODI_X, DIA_Y, ODI_Z], [ODI_Y, ODI_Z, DIA_Z]]
+    // @User: Advanced
     AP_GROUPINFO("MAG1_ODI",        8, SIM,  mag_offdiag[0], 0),
     // @Param: MAG1_ORIENT
     // @DisplayName: MAG1 Orientation
@@ -832,7 +887,23 @@ const AP_Param::GroupInfo SIM::var_mag[] = {
     AP_GROUPINFO("MAG1_FAIL",     26, SIM,  mag_fail[0], 0),
 #if HAL_COMPASS_MAX_SENSORS > 1
     AP_GROUPINFO("MAG2_OFS",      19, SIM,  mag_ofs[1], 0),
+    // @Param: MAG2_DIA_X
+    // @CopyFieldsFrom: SIM_MAG1_DIA_X
+
+    // @Param: MAG2_DIA_Y
+    // @CopyFieldsFrom: SIM_MAG1_DIA_Y
+
+    // @Param: MAG2_DIA_Z
+    // @CopyFieldsFrom: SIM_MAG1_DIA_Z
     AP_GROUPINFO("MAG2_DIA",      20, SIM,  mag_diag[1], 0),
+    // @Param: MAG2_ODI_X
+    // @CopyFieldsFrom: SIM_MAG1_ODI_X
+
+    // @Param: MAG2_ODI_Y
+    // @CopyFieldsFrom: SIM_MAG1_ODI_Y
+
+    // @Param: MAG2_ODI_Z
+    // @CopyFieldsFrom: SIM_MAG1_ODI_Z
     AP_GROUPINFO("MAG2_ODI",      21, SIM,  mag_offdiag[1], 0),
     // @Param: MAG2_ORIENT
     // @DisplayName: MAG2 Orientation
@@ -853,7 +924,23 @@ const AP_Param::GroupInfo SIM::var_mag[] = {
 #endif
 #if HAL_COMPASS_MAX_SENSORS > 2
     AP_GROUPINFO("MAG3_OFS",      23, SIM,  mag_ofs[2], 0),
+    // @Param: MAG3_DIA_X
+    // @CopyFieldsFrom: SIM_MAG1_DIA_X
+
+    // @Param: MAG3_DIA_Y
+    // @CopyFieldsFrom: SIM_MAG1_DIA_Y
+
+    // @Param: MAG3_DIA_Z
+    // @CopyFieldsFrom: SIM_MAG1_DIA_Z
     AP_GROUPINFO("MAG3_DIA",      24, SIM,  mag_diag[2], 0),
+    // @Param: MAG3_ODI_X
+    // @CopyFieldsFrom: SIM_MAG1_ODI_X
+
+    // @Param: MAG3_ODI_Y
+    // @CopyFieldsFrom: SIM_MAG1_ODI_Y
+
+    // @Param: MAG3_ODI_Z
+    // @CopyFieldsFrom: SIM_MAG1_ODI_Z
     AP_GROUPINFO("MAG3_ODI",      25, SIM,  mag_offdiag[2], 0),
     // @Param: MAG3_FAIL
     // @DisplayName: MAG3 Failure
