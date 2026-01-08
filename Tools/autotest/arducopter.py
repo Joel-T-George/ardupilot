@@ -457,6 +457,312 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
 
         self.wait_disarmed()
 
+    def circle_from_arc(self, p1, p2, theta_deg):
+        """
+        Compute a single circle center and radius given two points on a circle
+        and the signed central angle they subtend.
+
+        p1, p2: (x, y)
+        theta: signed central angle in radians
+               - the absolute value is used for geometry
+               - the sign determines which side of the chord the center is on
+
+        ... with thanks to ChatGPT
+
+        """
+
+        theta = math.radians(theta_deg)
+
+        (x1, y1), (x2, y2) = p1, p2
+
+        # chord vector and length
+        dx = x2 - x1
+        dy = y2 - y1
+        d = math.hypot(dx, dy)
+
+        # radius from absolute angle
+        a = abs(theta)
+        R = d / (2 * math.sin(a / 2))
+
+        # midpoint of chord
+        mx = (x1 + x2) / 2
+        my = (y1 + y2) / 2
+
+        # distance from midpoint to center
+        h = math.sqrt(R**2 - (d/2)**2)
+
+        # unit perpendicular
+        ux = -dy / d
+        uy = dx / d
+
+        # choose side based on sign of theta
+        sign = 1 if theta >= 0 else -1
+
+        cx = mx + sign * h * ux
+        cy = my + sign * h * uy
+
+        return (cx, cy), R
+
+    def WPArcs2(self):
+        '''more tests for waypoint arcs'''
+        self.set_parameters({
+            "AUTO_OPTIONS": 3,
+        })
+
+        def assert_no_movement(mav, m):
+            m_type = m.get_type()
+            if m_type != 'VFR_HUD':
+                return
+            if abs(m.climb) > 0.2 or abs(m.groundspeed) > 0.2:
+                raise NotAchievedException(f"Moved when I shouldn't {m=}")
+
+        def assert_no_lateral_movement(mav, m):
+            m_type = m.get_type()
+            if m_type != 'VFR_HUD':
+                return
+            print(f"{m.groundspeed=}")
+            if abs(m.groundspeed) > 0.2:
+                raise NotAchievedException(f"Moved when I shouldn't {m=}")
+
+        self.start_subtest("Shouldn't move if no takeoff")
+        self.change_mode('STABILIZE')  # needed to ensure Copter mission state machine works
+        self.context_push()
+        self.install_message_hook_context(assert_no_movement)
+        self.fly_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_ARC_WAYPOINT, 0, 0, 20, {"p1": 90}),
+        ])
+
+        self.context_pop()
+
+        self.start_subtest("Shouldn't move if no takeoff")
+        self.change_mode('STABILIZE')  # needed to ensure Copter mission state machine works
+        self.context_push()
+        self.install_message_hook_context(assert_no_movement)
+        self.fly_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_ARC_WAYPOINT, 20, 20, 20, {"p1": 90}),
+        ])
+        self.context_pop()
+
+        self.context_push()
+        self.start_subtest("Shouldn't move if no takeoff, even if we repeat ourselves")
+        self.change_mode('STABILIZE')  # needed to ensure Copter mission state machine works
+        self.install_message_hook_context(assert_no_movement)
+        self.fly_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_ARC_WAYPOINT, 0, 0, 20, {"p1": 90}),
+            (mavutil.mavlink.MAV_CMD_NAV_ARC_WAYPOINT, 0, 0, 20, {"p1": 90}),
+        ])
+        self.context_pop()
+
+        self.start_subtest("Shouldn't move if no start waypoint")
+        self.change_mode('STABILIZE')  # needed to ensure Copter mission state machine works
+        self.context_push()
+        self.install_message_hook_context(assert_no_lateral_movement)
+        self.fly_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 20),
+            (mavutil.mavlink.MAV_CMD_NAV_ARC_WAYPOINT, 0, 0, 20, {"p1": 90}),
+            (mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH, 0, 0, 0),
+        ])
+        self.context_pop()
+
+        self.start_subtest("Shouldn't move if endpoint is startpoint")
+        self.change_mode('STABILIZE')  # needed to ensure Copter mission state machine works
+        self.context_push()
+        self.install_message_hook_context(assert_no_lateral_movement)
+        self.fly_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 20),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 20),
+            (mavutil.mavlink.MAV_CMD_NAV_ARC_WAYPOINT, 0, 0, 20, {"p1": 90}),
+            (mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH, 0, 0, 0),
+        ])
+        self.context_pop()
+
+        self.progress("Creating a log per-flight")
+        self.change_mode('STABILIZE')  # needed to ensure Copter mission state machine works
+        self.set_parameter("LOG_FILE_DSRMROT", 1)
+        self.arm_vehicle()
+        self.disarm_vehicle()
+
+        # this will move but won't arc (it should...):
+        self.start_subtest("Should move if no start waypoint")
+        self.context_push()
+        self.start_flying_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 20),
+            (mavutil.mavlink.MAV_CMD_NAV_ARC_WAYPOINT, 30, 0, 20, {"p1": 90}),
+            (mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH, 0, 0, 0),
+        ])
+        self.wait_groundspeed(1, 10)
+        self.wait_distance_to_home(10, 20)
+        self.wait_disarmed()
+        self.context_pop()
+
+        self.start_subtest("Degenerate arc - should be a straight-line segment")
+        self.change_mode('STABILIZE')  # needed to ensure Copter mission state machine works
+        self.start_flying_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 20),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 20),
+            (mavutil.mavlink.MAV_CMD_NAV_ARC_WAYPOINT, 30, 0, 20, {"p1": 0}),
+            (mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH, 0, 0, 0),
+        ])
+        self.wait_groundspeed(1, 10)
+        self.wait_distance_to_home(10, 20)
+        self.wait_disarmed()
+
+        self.start_subtest("Degenerate arc - no length")
+        self.change_mode('STABILIZE')  # needed to ensure Copter mission state machine works
+        self.start_flying_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 20),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 10, 0, 20),
+            (mavutil.mavlink.MAV_CMD_NAV_ARC_WAYPOINT, 10, 0, 20, {"p1": 180}),
+            (mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH, 0, 0, 0),
+        ])
+        self.wait_groundspeed(1, 10)
+        self.wait_distance_to_home(5, 20)
+        self.wait_disarmed()
+
+        self.start_subtest("Should arc if we start with a waypoint")
+        self.change_mode('STABILIZE')  # needed to ensure Copter mission state machine works
+        pos, radius = self.circle_from_arc((0, 0), (90, 0), 90)
+        loc = self.offset_location_ne(self.home_position_as_mav_location(), pos[0], pos[1])
+        self.start_flying_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 20),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 20),
+            (mavutil.mavlink.MAV_CMD_NAV_ARC_WAYPOINT, 90, 0, 20, {"p1": 90}),
+            (mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH, 0, 0, 0),
+        ])
+        self.wait_altitude(19, 21, relative=True)
+        self.wait_groundspeed(1, 10)
+        self.wait_circling_point_with_radius(
+            loc, radius,
+            epsilon=1,
+            min_circle_time=10,
+            timeout=30,
+            track_angle=False,
+        )
+        self.wait_distance_to_home(80, 100)
+        self.wait_disarmed()
+
+        self.start_subtest("arc - should end up with a mirrored D")
+        self.change_mode('STABILIZE')  # needed to ensure Copter mission state machine works
+        self.context_push()
+        pos, radius = self.circle_from_arc((0, 0), (90, 0), -90)
+        loc = self.offset_location_ne(self.home_position_as_mav_location(), pos[0], pos[1])
+        self.start_flying_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 20),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 20),
+            (mavutil.mavlink.MAV_CMD_NAV_ARC_WAYPOINT, 90, 0, 20, {"p1": 270}),
+            (mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH, 0, 0, 0),
+        ])
+        self.wait_altitude(19, 21, relative=True)
+        self.wait_groundspeed(1, 10)
+        self.wait_circling_point_with_radius(
+            loc, radius,
+            epsilon=1,
+            min_circle_time=10,
+            timeout=30,
+            track_angle=False,
+        )
+        self.wait_disarmed(timeout=600)
+        self.context_pop()
+
+        self.start_subtest("arc - should end up with a D")
+        self.change_mode('STABILIZE')  # needed to ensure Copter mission state machine works
+        self.context_push()
+        pos, radius = self.circle_from_arc((0, 0), (90, 0), 90)
+        loc = self.offset_location_ne(self.home_position_as_mav_location(), pos[0], pos[1])
+        self.start_flying_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 20),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 20),
+            (mavutil.mavlink.MAV_CMD_NAV_ARC_WAYPOINT, 90, 0, 20, {"p1": -270}),
+            (mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH, 0, 0, 0),
+        ])
+        self.wait_altitude(19, 21, relative=True)
+        self.wait_groundspeed(1, 10)
+        self.wait_circling_point_with_radius(
+            loc, radius,
+            epsilon=1,
+            min_circle_time=10,
+            timeout=30,
+            track_angle=False,
+        )
+        self.wait_disarmed(timeout=600)
+        self.context_pop()
+
+        self.start_subtest("arc - should end up with helix up")
+        self.change_mode('STABILIZE')  # needed to ensure Copter mission state machine works
+        self.context_push()
+        pos = (45, 0)
+        radius = 45
+        loc = self.offset_location_ne(self.home_position_as_mav_location(), pos[0], pos[1])
+        self.start_flying_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 20),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 20),
+            (mavutil.mavlink.MAV_CMD_NAV_ARC_WAYPOINT, 90, 0, 100, {"p1": -2700}),
+            (mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH, 0, 0, 0),
+        ])
+        self.wait_altitude(19, 21, relative=True)
+        self.wait_groundspeed(1, 10)
+        self.wait_circling_point_with_radius(
+            loc, radius,
+            epsilon=1,
+            min_circle_time=360,
+            timeout=400,
+            track_angle=False,
+        )
+        self.wait_altitude(99, 101, relative=True, timeout=240)
+        self.wait_disarmed(timeout=600)
+        self.context_pop()
+
+        self.start_subtest("arc - should end up with helix down")
+        self.change_mode('STABILIZE')  # needed to ensure Copter mission state machine works
+        self.context_push()
+        self.start_flying_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 100),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 100),
+            (mavutil.mavlink.MAV_CMD_NAV_ARC_WAYPOINT, 30, 0, 20, {"p1": 2700}),
+            (mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH, 0, 0, 0),
+        ])
+        self.wait_altitude(90, 100, relative=True, timeout=120)
+        self.wait_groundspeed(1, 10)
+        self.wait_distance_to_home(10, 20)
+        self.wait_disarmed(timeout=600)
+        self.context_pop()
+
+        self.start_subtest("arc - chained arcs")
+        self.change_mode('STABILIZE')  # needed to ensure Copter mission state machine works
+        self.context_push()
+        self.start_flying_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 20),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 20),
+            (mavutil.mavlink.MAV_CMD_NAV_ARC_WAYPOINT, 30, 0, 20, {"p1": 90}),
+            (mavutil.mavlink.MAV_CMD_NAV_ARC_WAYPOINT, 60, 0, 20, {"p1": 90}),
+            (mavutil.mavlink.MAV_CMD_NAV_ARC_WAYPOINT, 60, 0, 20, {"p1": -90}),
+            (mavutil.mavlink.MAV_CMD_NAV_ARC_WAYPOINT, 60, 0, 20, {"p1": -90}),
+            (mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH, 0, 0, 0),
+        ])
+        self.wait_altitude(15, 25, relative=True, timeout=120)
+        self.wait_groundspeed(1, 10)
+        self.wait_distance_to_home(10, 20)
+        self.wait_disarmed(timeout=600)
+        self.context_pop()
+
+        self.start_subtest("arc - chained arcs - up/down")
+        self.change_mode('STABILIZE')  # needed to ensure Copter mission state machine works
+        self.context_push()
+        self.start_flying_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 20),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 20),
+            (mavutil.mavlink.MAV_CMD_NAV_ARC_WAYPOINT, 30, 0, 20, {"p1": 180}),
+            (mavutil.mavlink.MAV_CMD_NAV_ARC_WAYPOINT, 60, 0, 40, {"p1": -180}),
+            (mavutil.mavlink.MAV_CMD_NAV_ARC_WAYPOINT, 90, 0, 40, {"p1": 180}),
+            (mavutil.mavlink.MAV_CMD_NAV_ARC_WAYPOINT, 120, 0, 20, {"p1": -180}),
+            (mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH, 0, 0, 0),
+        ])
+        self.wait_altitude(15, 25, relative=True, timeout=120)
+        self.wait_groundspeed(1, 10)
+        self.wait_distance_to_home(10, 20)
+        self.wait_disarmed(timeout=600)
+        self.context_pop()
+
     # enter RTL mode and wait for the vehicle to disarm
     def do_RTL(self, distance_min=None, check_alt=True, distance_max=10, timeout=250, quiet=False):
         """Enter RTL mode and wait for the vehicle to disarm at Home."""
@@ -1250,29 +1556,6 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
         # revert simulated accel bias and reboot to restore EKF health
         self.context_pop()
         self.reboot_sitl()
-
-    def test_takeoff_check_mode(self, mode, user_takeoff=False):
-        # stabilize check
-        self.progress("Motor takeoff check in %s" % mode)
-        self.change_mode(mode)
-        self.zero_throttle()
-        self.wait_ready_to_arm()
-        self.context_push()
-        self.context_collect('STATUSTEXT')
-        self.arm_vehicle()
-        if user_takeoff:
-            self.run_cmd(
-                mavutil.mavlink.MAV_CMD_NAV_TAKEOFF,
-                p7=10,
-            )
-        else:
-            self.set_rc(3, 1700)
-        # we may never see ourselves as armed in a heartbeat
-        self.wait_statustext("Takeoff blocked: ESC RPM out of range", check_context=True)
-        self.context_pop()
-        self.zero_throttle()
-        self.disarm_vehicle()
-        self.wait_disarmed()
 
     # Tests the motor failsafe
     def TakeoffCheck(self):
@@ -2153,6 +2436,42 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
                 raise NotAchievedException(f"Mismatch in item {i}: " + "; ".join(mismatches))
 
         print("Fence upload/download verification passed.")
+
+    def assert_fence_not_breached(self):
+        m = self.assert_receive_message('FENCE_STATUS', timeout=2)
+        if m.breach_status != 0:
+            raise NotAchievedException("Fence is breached")
+
+    def assert_fence_breached(self):
+        m = self.assert_receive_message('FENCE_STATUS', timeout=2)
+        if m.breach_status == 0:
+            raise NotAchievedException("Fence is not breached")
+
+    def BackupFence(self):
+        '''ensure the lateral backup fence functionality works'''
+        self.set_parameters({
+            "FENCE_RADIUS": 10,
+            "FENCE_TYPE": 2,  # circle only
+            "FENCE_ENABLE": 1,
+            "AVOID_ENABLE": 0,
+        })
+        self.wait_sensor_state(mavutil.mavlink.MAV_SYS_STATUS_GEOFENCE,
+                               present=True,
+                               enabled=True,
+                               healthy=True,
+                               timeout=30)
+        self.assert_fence_not_breached()
+        self.takeoff(10, mode='LOITER')
+        self.set_rc(2, 1300)
+        self.wait_mode('RTL', timeout=30)
+        self.assert_fence_breached()
+        self.change_mode('LOITER')
+        # continue to suck as a pilot
+        self.wait_mode('RTL', timeout=30)
+        self.assert_fence_breached()
+        self.set_rc(2, 1500)  # stop sucking
+        self.wait_disarmed()
+        self.assert_at_home()
 
     def GPSGlitchLoiter(self, timeout=30, max_distance=20):
         """fly_gps_glitch_loiter_test. Fly south east in loiter and test
@@ -3579,7 +3898,8 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
         })
 
         self.context_push()
-        self.set_parameter("ARMING_CHECK", 1 << 3)
+        # enable only GPS arming check during ordering test
+        self.set_parameter("ARMING_SKIPCHK", ~(1 << 3))
         self.context_collect('STATUSTEXT')
 
         self.reboot_sitl()
@@ -3653,7 +3973,7 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
                 self.context_stop_collecting('STATUSTEXT')
         self.progress("############################### All GPS Order Cases Tests Passed")
         self.progress("############################### Test Healthy Prearm check")
-        self.set_parameter("ARMING_CHECK", 1)
+        self.set_parameter("ARMING_SKIPCHK", 0)
         self.stop_sup_program(instance=0)
         self.start_sup_program(instance=0, args="-M")
         self.stop_sup_program(instance=1)
@@ -5580,21 +5900,11 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
 
     def PayloadPlaceMission(self):
         """Test payload placing in auto."""
-        self.context_push()
-
         self.set_analog_rangefinder_parameters()
         self.set_servo_gripper_parameters()
         self.reboot_sitl()
 
-        self.load_mission("copter_payload_place.txt")
-        if self.mavproxy is not None:
-            self.mavproxy.send('wp list\n')
-
-        self.set_parameter("AUTO_OPTIONS", 3)
-        self.change_mode('AUTO')
-        self.wait_ready_to_arm()
-
-        self.arm_vehicle()
+        num_wp = self.load_and_start_mission("copter_payload_place.txt")
 
         self.wait_text("Gripper load releas(ed|ing)", timeout=90, regex=True)
         dist_limit = 1
@@ -5609,11 +5919,8 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
             raise NotAchievedException("Did not honour target lat/lng (dist=%f want <%f" %
                                        (dist, dist_limit))
 
-        self.wait_disarmed()
-
-        self.context_pop()
-        self.reboot_sitl()
-        self.progress("All done")
+        self.wait_waypoint(num_wp-1, num_wp-1)
+        self.do_RTL()
 
     def PayloadPlaceMissionOpenGripper(self):
         '''test running the mission when the gripper is open'''
@@ -5890,6 +6197,7 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
         return min(max(pitch_angle_deg, PITCH_MIN), PITCH_MAX)
 
     def test_mount_pitch(self, despitch, despitch_tolerance, mount_mode, timeout=10, hold=0, constrained=True):
+        self.set_mount_mode(mount_mode)
         tstart = self.get_sim_time()
         success_start = 0
 
@@ -8630,16 +8938,6 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
         })
         self.reboot_sitl()
 
-        # turn off GPS arming checks.  This may be considered a
-        # bug that we need to do this.
-        old_arming_check = int(self.get_parameter("ARMING_CHECK"))
-        if old_arming_check == 1:
-            old_arming_check = 1 ^ 25 - 1
-        new_arming_check = int(old_arming_check) & ~(1 << 3)
-        self.set_parameter("ARMING_CHECK", new_arming_check)
-
-        self.reboot_sitl()
-
         # require_absolute=True infers a GPS is present
         self.wait_ready_to_arm(require_absolute=False)
 
@@ -8986,12 +9284,10 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
         self.wait_disarmed()
         self.set_rc(3, 1000)  # Restore the throttle stick since takeoff raised it.
 
-    def Loweheiser(self):
-        '''Ensure the Loweheiser device sends in GENERATOR_STATUS and EFI_STATUS messages'''
+    def LoweheiserAuto(self):
+        '''Ensure the Loweheiser generator works as expected in auto-starter mode.'''
 
         gen_ctrl_ch = 9
-        loweheiser_man_throt_ch = 10
-        loweheiser_man_start_ch = 11
 
         self.set_parameters({
             "SERIAL5_PROTOCOL": 2,    # mavlink
@@ -9008,32 +9304,33 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
 
         self.set_rc_from_map({
             gen_ctrl_ch: 1000,   # remember this is a switch position - stop
-            loweheiser_man_throt_ch: 1000,
-            loweheiser_man_start_ch: 1000,
         })
 
         self.customise_SITL_commandline(["--serial5=sim:loweheiser"])
 
         self.set_parameters({
-            "GEN_IDLE_TH": 25,
-            "GEN_IDLE_TH_H": 40,
-            "GEN_RUN_TEMP": 60,
-            "GEN_IDLE_TEMP": 80,
+            "GEN_L_IDLE_TH": 25,
+            "GEN_L_IDLE_TH_H": 40,
+            "GEN_L_RUN_TEMP": 60,
+            "GEN_L_IDLE_TEMP": 80,
         })
 
         self.reboot_sitl()
 
-        self.assert_parameter_value("GEN_IDLE_TH", 25)
+        self.assert_parameter_value("GEN_L_IDLE_TH", 25)
 
         self.delay_sim_time(10)  # so we can actually receive messages...
 
-        self.start_subtest("Checking GENERATOR_STATUS")
+        #######################################################################
+        # Generator OFF subtest.
+        #######################################################################
+        self.start_subtest("Checking GENERATOR_STATUS while OFF.")
         self.set_message_rate_hz("GENERATOR_STATUS", 10)
         self.delay_sim_time(1)
 
         self.wait_generator_speed_and_state(0, 0, mavutil.mavlink.MAV_GENERATOR_STATUS_FLAG_OFF)
 
-        self.start_subtest("Checking EFI_STATUS")
+        self.start_subtest("Checking EFI_STATUS while OFF.")
         self.set_message_rate_hz("EFI_STATUS", 10)
         self.delay_sim_time(1)
         self.assert_received_message_field_values('EFI_STATUS', {
@@ -9075,7 +9372,10 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
         # check prearms - should bounce due to generator not in correct state
         self.try_arm(result=False, expect_msg="requested state is not RUN")
 
-        self.start_subtest("Generator to idle")
+        #######################################################################
+        # Generator IDLE subtest.
+        #######################################################################
+        self.start_subtest("Setting generator to IDLE state.")
         self.set_rc(gen_ctrl_ch, 1500) # remember this is a switch position - idle
         self.wait_statustext("Generator MIDDLE", check_context=True)
         self.delay_sim_time(2)
@@ -9107,7 +9407,10 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
         })
         self.wait_generator_speed_and_state(2000, 3000, mavutil.mavlink.MAV_GENERATOR_STATUS_FLAG_IDLE)
 
-        self.start_subtest("Move generator to run")
+        #######################################################################
+        # Generator RUN subtest.
+        #######################################################################
+        self.start_subtest("Setting generator to RUN state.")
         self.set_rc(gen_ctrl_ch, 2000) # remember this is a switch position - run
         self.wait_statustext("Generator HIGH", check_context=True)
 
@@ -9193,7 +9496,9 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
 
         self.set_parameter("LOG_DISARMED", 0)
         if not self.current_onboard_log_contains_message("LOEG"):
-            raise NotAchievedException("Did not find expected GEN message")
+            raise NotAchievedException("Did not find expected LOEG message in .bin log")
+        if not self.current_onboard_log_contains_message("LOEC"):
+            raise NotAchievedException("Did not find expected LOEC message in .bin log")
 
         self.set_parameter("LOG_DISARMED", 1)  # Re-start logging, to help with debugging.
         self.progress("Stopping generator")
@@ -9203,11 +9508,93 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
 
         self.wait_generator_speed_and_state(0, 0, mavutil.mavlink.MAV_GENERATOR_STATUS_FLAG_OFF)
 
-        self.end_subtest("Move generator to run")
+        #######################################################################
+        # E-stop subtest.
+        #######################################################################
+        self.start_subtest("Checking safety switch estop")
+        self.set_rc(gen_ctrl_ch, 2000)
+        self.wait_generator_speed_and_state(8000, 30000, mavutil.mavlink.MAV_GENERATOR_STATUS_FLAG_GENERATING)
 
-        self.start_subtest("LoweHeiser manual control")
+        self.set_safetyswitch_on()
+        self.wait_generator_speed_and_state(0, 0, mavutil.mavlink.MAV_GENERATOR_STATUS_FLAG_OFF)
+        self.wait_message_field_values('EFI_STATUS', {
+            # note that percent isn't honouring dead-zones...
+            "throttle_position": 0,
+            "rpm": 0,
+        })
+
+        self.set_safetyswitch_off()
+
+        self.wait_message_field_values('EFI_STATUS', {
+            # note that percent isn't honouring dead-zones...
+            "throttle_position": 80,  # Throttle set by governor.
+            "rpm": 8000,  # RPM for 50% throttle
+        }, timeout=20)
+
+        # stop generator:
+        self.set_rc(gen_ctrl_ch, 1000)
+        self.wait_generator_speed_and_state(0, 0, mavutil.mavlink.MAV_GENERATOR_STATUS_FLAG_OFF)
+
+        #######################################################################
+        # Battery failsafe subtest.
+        #######################################################################
+        self.start_subtest("Battery Failsafes")
         self.context_push()
+        batt3_capacity = 500
+        batt3_low_mah = 100
+        batt3_low_consumed_mah = batt3_capacity - batt3_low_mah
         self.set_parameters({
+            "BATT3_CAPACITY": batt3_capacity,
+            "BATT3_LOW_MAH": batt3_low_mah,
+            "BATT3_CRT_MAH": 50,
+            "BATT3_FS_LOW_ACT": 2, # RTL
+            "BATT3_FS_CRT_ACT": 1, # LAND
+            "BATT3_LOW_VOLT": 0,
+        })
+        self.reboot_sitl()
+        self.set_rc(gen_ctrl_ch, 2000)
+        self.takeoff(10, mode='GUIDED')
+
+        first_efi_status = self.assert_receive_message('EFI_STATUS', verbose=True)
+        if first_efi_status.fuel_consumed < 100:  # takes about this much to get going
+            raise NotAchievedException("Unexpected fuel consumed value after takeoff (%f)" % first_efi_status.fuel_consumed)
+
+        self.fly_guided_move_local(100, 100, 20)
+
+        self.wait_mode('RTL', timeout=300)
+
+        second_efi_status = self.assert_receive_message('EFI_STATUS', verbose=True)
+
+        if second_efi_status.fuel_consumed < batt3_low_consumed_mah:
+            raise NotAchievedException("Unexpected fuel consumed value after failsafe (%f)" % second_efi_status.fuel_consumed)
+
+        self.wait_mode('LAND', timeout=300)
+        self.wait_disarmed()
+
+        self.context_pop()
+        self.reboot_sitl()
+
+        self.set_message_rate_hz("EFI_STATUS", -1)
+        self.set_message_rate_hz("GENERATOR_STATUS", -1)
+
+    def LoweheiserManual(self):
+        '''Ensure the Loweheiser generator works as expected in manual starter mode.'''
+
+        gen_ctrl_ch = 9
+        loweheiser_man_throt_ch = 10
+        loweheiser_man_start_ch = 11
+
+        self.set_parameters({
+            "SERIAL5_PROTOCOL": 2,    # mavlink
+            "MAV3_OPTIONS": 2,        # private
+            "GEN_TYPE": 4,            # loweheiser
+            "EFI_TYPE": 4,            # loweheiser
+            "SIM_EFI_TYPE": 2,        # loweheiser sim
+            "BATT2_MONITOR": 17,  # generator (elec)
+            "BATT3_MONITOR": 18,  # generator (fuel-level)
+            "BATT3_CAPACITY": 10000,  # generator (fuel) in mL
+            f"RC{gen_ctrl_ch}_OPTION": 85,  # generator control
+            "LOG_DISARMED": 1,
             "RC%u_OPTION" % loweheiser_man_throt_ch: 218,  # loweheiser manual throttle control
             "RC%u_DZ" % loweheiser_man_throt_ch: 20,
             "RC%u_TRIM" % loweheiser_man_throt_ch: 1000,
@@ -9215,27 +9602,73 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
             "RC%u_MAX" % loweheiser_man_throt_ch: 2000,
             "RC%u_OPTION" % loweheiser_man_start_ch: 111, # loweheiser starter channel
         })
-        self.set_rc(loweheiser_man_throt_ch, 1000)  # zero throttle
-        self.set_rc(loweheiser_man_start_ch, 1000)  # zero starter channel
 
-        # check generator doesn't auto-start - except in "run"
-        for pwm in 1000, 1500:  # off, idle
-            self.set_rc(gen_ctrl_ch, pwm)
-            self.delay_sim_time(5)
-            self.wait_generator_speed_and_state(0, 0, mavutil.mavlink.MAV_GENERATOR_STATUS_FLAG_OFF)
+        self.set_rc_from_map({
+            gen_ctrl_ch: 1000,   # remember this is a switch position - stop
+            loweheiser_man_throt_ch: 1000,  # zero throttle
+            loweheiser_man_start_ch: 1000,  # the starter is off
+        })
 
-            self.assert_received_message_field_values('EFI_STATUS', {
-                "throttle_out": 0,
-                "rpm": 0,
-            })
+        self.customise_SITL_commandline(["--serial5=sim:loweheiser"])
 
-        self.set_rc(gen_ctrl_ch, 2000)
-        self.delay_sim_time(5)
-        self.wait_generator_speed_and_state(8000, 30000, mavutil.mavlink.MAV_GENERATOR_STATUS_FLAG_GENERATING)
+        self.set_parameters({
+            "GEN_L_IDLE_TH": 25,
+            "GEN_L_IDLE_TH_H": 40,
+            "GEN_L_RUN_TEMP": 60,
+            "GEN_L_IDLE_TEMP": 80,
+        })
 
-        self.progress("Stopping generator again")
-        self.set_rc(gen_ctrl_ch, 1000)
+        self.reboot_sitl()
+
+        self.assert_parameter_value("GEN_L_IDLE_TH", 25)
+
+        self.delay_sim_time(10)  # so we can actually receive messages...
+
+        #######################################################################
+        # Generator OFF subtest.
+        #######################################################################
+        self.start_subtest("Checking GENERATOR_STATUS while OFF.")
+        self.set_message_rate_hz("GENERATOR_STATUS", 10)
+        self.delay_sim_time(1)
+
         self.wait_generator_speed_and_state(0, 0, mavutil.mavlink.MAV_GENERATOR_STATUS_FLAG_OFF)
+
+        self.start_subtest("Checking EFI_STATUS while OFF.")
+        self.set_message_rate_hz("EFI_STATUS", 10)
+        self.delay_sim_time(1)
+        self.assert_received_message_field_values('EFI_STATUS', {
+            "health": 1,
+            "ecu_index": 1.0,
+            "rpm": 0.0,
+            "fuel_consumed": 0,
+            "fuel_flow": float("nan"),
+            "engine_load": 0.0,
+            "throttle_position": 0.0,
+            "spark_dwell_time": 0.0,
+            "barometric_pressure": 0.0,
+            "intake_manifold_pressure": float("nan"),
+            "intake_manifold_temperature": float("nan"),
+            "cylinder_head_temperature": float("nan"),
+            "ignition_timing": 0.0,
+            "injection_time": float("nan"),
+            "exhaust_gas_temperature": float("nan"),
+            "throttle_out": 0.0,
+            "pt_compensation": 0.0,
+            "ignition_voltage": 0,  # As per the spec, 0 means "Unknown".
+        }, epsilon=1.0)
+        self.assert_received_message_field_values('GENERATOR_STATUS', {
+            "status": 1,
+            "generator_speed": 0,
+            "battery_current": -0.30000001192092896,
+            "load_current": 10.119999885559082,
+            "power_generated": 521.0,
+            "bus_voltage": 50,
+            "rectifier_temperature": 32767,
+            "bat_current_setpoint": float("nan"),
+            "generator_temperature": 32767,
+            "runtime": 0,
+            "time_until_maintenance": 300*60*60,
+        })
 
         rc_dz = self.get_parameter('RC%u_DZ' % loweheiser_man_throt_ch)
         rc_trim = int(self.get_parameter('RC%u_TRIM' % loweheiser_man_throt_ch))
@@ -9252,37 +9685,187 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
                 "rpm": 0,
             })
 
-        # at 50 percent throttle
+        self.context_collect('STATUSTEXT')
+        # check prearms - should bounce due to generator not in correct state
+        self.try_arm(result=False, expect_msg="requested state is not RUN")
+
+        #######################################################################
+        # Generator IDLE subtest.
+        #######################################################################
+        self.start_subtest("Setting generator to IDLE state.")
+        self.set_rc(gen_ctrl_ch, 1500) # remember this is a switch position - idle
+        self.wait_statustext("Generator MIDDLE", check_context=True)
+        self.delay_sim_time(5)
+
+        # Ensure the generator has not auto-started.
+        self.assert_received_message_field_values('EFI_STATUS', {
+            "throttle_out": 0,
+            "rpm": 0,
+        })
+
+        # at 50 percent throttle should not start until user triggers starter
         pwm_for_fifty_percent_throttle = int(rc_min + rc_dz + int((rc_max-rc_min-rc_dz)/2))
         self.progress("Using PWM of %u for 50 percent throttle" % pwm_for_fifty_percent_throttle)
         self.set_rc(loweheiser_man_throt_ch, pwm_for_fifty_percent_throttle)
-
-        self.progress("Turning EFI on (setting IDLE)")
-        self.set_rc(gen_ctrl_ch, 1500)
-
-        # should not start until user triggers starter
         self.wait_message_field_values('EFI_STATUS', {
             # note that percent isn't honouring dead-zones...
             "throttle_position": 51,  # magic fixed throttle value from AP_Generator_Loweheiser.cpp
             "rpm": 0,
         }, timeout=20)
 
-        self.progress("Running starter")
-        self.set_rc(loweheiser_man_start_ch, 2000)
+        self.set_rc(loweheiser_man_start_ch, 2000)  # Run the starter for a few seconds.
+
+        self.drain_mav()
+        self.assert_received_message_field_values('EFI_STATUS', {
+            "intake_manifold_pressure": 94,
+            "exhaust_gas_temperature": float("nan"),
+            "ignition_voltage": 12,
+        }, epsilon=1.0)
+
+        self.wait_message_field_values('EFI_STATUS', {
+            "cylinder_head_temperature": 20,
+        }, epsilon=5.0, timeout=10)
+
+        self.set_rc(loweheiser_man_start_ch, 1000)
+
+        self.assert_received_message_field_values('GENERATOR_STATUS', {
+            # Commenting out "status" argument.
+            # For some reason the test suite can't accept an integer value. Says it's not part of the FLAG.
+            # "status": mavutil.mavlink.MAV_GENERATOR_STATUS_FLAG_IDLE,
+            "battery_current": -0.30000001192092896,
+            "load_current": 10.119999885559082,
+            "power_generated": 521.0,
+            "bus_voltage": 50,
+            "rectifier_temperature": 32767,
+            "bat_current_setpoint": float("nan"),
+            "generator_temperature": 32767,
+            "runtime": 2,
+            "time_until_maintenance": 300*60*60 - 2,
+        })
 
         self.progress("Generator at idle should not run governor and use throttle input")
-        self.delay_sim_time(30)
-        self.set_rc(loweheiser_man_throt_ch, pwm_for_fifty_percent_throttle)
         self.wait_message_field_values('EFI_STATUS', {
             # note that percent isn't honouring dead-zones...
             "throttle_position": 51,  # magic fixed throttle value from AP_Generator_Loweheiser.cpp
             "rpm": 4080,  # RPM for 50% throttle
         }, timeout=20)
 
-        self.assert_current_onboard_log_contains_message('LOEG')
-        self.assert_current_onboard_log_contains_message('LOEC')
+        #######################################################################
+        # Generator RUN subtest.
+        #######################################################################
+        self.start_subtest("Setting generator to RUN state.")
+        self.set_rc(gen_ctrl_ch, 2000) # remember this is a switch position - run
+        self.wait_statustext("Generator HIGH", check_context=True)
 
+        # check prearms - should bounce due to generator too cold
+        self.try_arm(result=False, expect_msg="Generator warming up")
+
+        self.set_rc(gen_ctrl_ch, 1000) # remember this is a switch position - stop
+        self.wait_statustext("requested state is not RUN", timeout=200)
+
+        self.set_rc(gen_ctrl_ch, 1500) # remember this is a switch position - idle
+        self.set_rc(loweheiser_man_start_ch, 2000)
+        self.wait_generator_speed_and_state(2000, 3000, mavutil.mavlink.MAV_GENERATOR_STATUS_FLAG_IDLE)
+        self.set_rc(loweheiser_man_start_ch, 1000)
+
+        self.set_rc(gen_ctrl_ch, 2000) # remember this is a switch position - run
+
+        self.wait_generator_speed_and_state(8000, 30000, mavutil.mavlink.MAV_GENERATOR_STATUS_FLAG_GENERATING)
+
+        bs = self.assert_receive_message(
+            "BATTERY_STATUS",
+            condition="BATTERY_STATUS.id==1",  # id is zero-indexed
+            timeout=1,
+            very_verbose=True,
+        )
+        if bs is None:
+            raise NotAchievedException("Did not receive BATTERY_STATUS")
+        self.progress("Received battery status: %s" % str(bs))
+        want_bs_volt = 50000
+        if bs.voltages[0] != want_bs_volt:
+            raise NotAchievedException("Battery voltage not as expected (want=%f) got=(%f)" % (want_bs_volt, bs.voltages[0],))
+
+        self.progress("Checking battery remaining")
+        bs = self.assert_receive_message(
+            "BATTERY_STATUS",
+            condition="BATTERY_STATUS.id==2",  # id is zero-indexed
+            timeout=1,
+            very_verbose=True,
+        )
+        self.progress("Waiting for some fuel to be consumed...")
+        self.wait_message_field_values("BATTERY_STATUS", {
+            "id": 2,
+            "battery_remaining": bs.battery_remaining-1,
+        }, timeout=100)
+
+        bs2 = self.assert_receive_message(
+            "BATTERY_STATUS",
+            condition="BATTERY_STATUS.id==2",  # id is zero-indexed
+            timeout=1,
+            very_verbose=True,
+        )
+        if bs2.battery_remaining >= bs.battery_remaining:
+            raise NotAchievedException("Expected battery remaining to drop")
+        if bs2.current_consumed <= bs.current_consumed:
+            raise NotAchievedException("Expected energy consumed to rise")
+
+        self.progress("Checking battery reset")
+        batt_reset_values = [(25, 24),
+                             (50, 49),
+                             (63, 62),
+                             (87, 86),
+                             (100, 99)]
+
+        for (reset_val, return_val) in batt_reset_values:
+            self.run_cmd(mavutil.mavlink.MAV_CMD_BATTERY_RESET,
+                         (1 << 2), # param1 - bitmask of batteries to reset
+                         reset_val, # level to reset to
+                         0, # param3
+                         0, # param4
+                         0, # param5
+                         0, # param6
+                         0 # param7
+                         )
+            self.wait_message_field_values("BATTERY_STATUS", {
+                "id": 2,
+                "battery_remaining": return_val,
+            }, timeout=5)
+
+        self.progress("Moving *back* to idle")
+        self.set_rc(gen_ctrl_ch, 1500) # remember this is a switch position - idle
+        self.wait_generator_speed_and_state(3000, 10000, mavutil.mavlink.MAV_GENERATOR_STATUS_FLAG_IDLE)
+
+        self.progress("Moving *back* to run")
+        self.set_rc(gen_ctrl_ch, 2000) # remember this is a switch position - run
+        self.wait_generator_speed_and_state(8000, 30000, mavutil.mavlink.MAV_GENERATOR_STATUS_FLAG_GENERATING)
+
+        self.set_parameter("LOG_DISARMED", 0)
+        if not self.current_onboard_log_contains_message("LOEG"):
+            raise NotAchievedException("Did not find expected LOEG message in .bin log")
+        if not self.current_onboard_log_contains_message("LOEC"):
+            raise NotAchievedException("Did not find expected LOEC message in .bin log")
+
+        self.set_parameter("LOG_DISARMED", 1)  # Re-start logging, to help with debugging.
+        self.progress("Stopping generator")
+        self.set_rc(gen_ctrl_ch, 1000)
+
+        self.wait_statustext("Cooling down")
+
+        self.wait_generator_speed_and_state(0, 0, mavutil.mavlink.MAV_GENERATOR_STATUS_FLAG_OFF)
+
+        #######################################################################
+        # E-stop subtest.
+        #######################################################################
         self.start_subtest("Checking safety switch estop")
+        # Start the engine.
+        self.set_rc(gen_ctrl_ch, 1500)
+        self.set_rc(loweheiser_man_start_ch, 2000)
+        self.wait_message_field_values('EFI_STATUS', {
+            # note that percent isn't honouring dead-zones...
+            "rpm": 4000,  # RPM for 50% throttle
+        }, timeout=20)
+        self.set_rc(loweheiser_man_start_ch, 1000)
+
         self.set_safetyswitch_on()
         self.wait_generator_speed_and_state(0, 0, mavutil.mavlink.MAV_GENERATOR_STATUS_FLAG_OFF)
         self.wait_message_field_values('EFI_STATUS', {
@@ -9293,18 +9876,22 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
 
         self.set_safetyswitch_off()
 
+        self.set_rc(gen_ctrl_ch, 1500)
+        self.set_rc(loweheiser_man_start_ch, 2000)
         self.wait_message_field_values('EFI_STATUS', {
             # note that percent isn't honouring dead-zones...
             "throttle_position": 51,  # magic fixed throttle value from AP_Generator_Loweheiser.cpp
             "rpm": 4000,  # RPM for 50% throttle
         }, timeout=20)
+        self.set_rc(loweheiser_man_start_ch, 1000)
 
         # stop generator:
         self.set_rc(gen_ctrl_ch, 1000)
         self.wait_generator_speed_and_state(0, 0, mavutil.mavlink.MAV_GENERATOR_STATUS_FLAG_OFF)
 
-        self.context_pop()
-
+        #######################################################################
+        # Battery failsafe subtest.
+        #######################################################################
         self.start_subtest("Battery Failsafes")
         self.context_push()
         batt3_capacity = 500
@@ -9319,7 +9906,14 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
             "BATT3_LOW_VOLT": 0,
         })
         self.reboot_sitl()
-        self.set_rc(gen_ctrl_ch, 2000)  # start generator
+
+        # Start the generator anew.
+        self.set_rc(gen_ctrl_ch, 1500)
+        self.set_rc(loweheiser_man_start_ch, 2000)
+        self.delay_sim_time(5)
+        self.set_rc(loweheiser_man_start_ch, 1000)
+        self.set_rc(gen_ctrl_ch, 2000)
+        self.wait_generator_speed_and_state(8000, 30000, mavutil.mavlink.MAV_GENERATOR_STATUS_FLAG_GENERATING)
         self.takeoff(10, mode='GUIDED')
 
         first_efi_status = self.assert_receive_message('EFI_STATUS', verbose=True)
@@ -9952,6 +10546,7 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
             ("nooploop_tofsense", 37),
             ("ainsteinlrd1", 42),
             ("rds02uf", 43),
+            ("lightware_grf", 45),
         ]
         # you can use terrain - if you don't the vehicle just uses a
         # plane based on home.
@@ -10369,7 +10964,7 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
         self.wait_gps_disable(position_vertical=True)
 
         # turn off arming checks (mandatory arming checks will still be run)
-        self.set_parameter("ARMING_CHECK", 0)
+        self.set_parameter("ARMING_SKIPCHK", -1)
 
         # delay 12 sec to allow EKF to lose altitude estimate
         self.delay_sim_time(12)
@@ -10536,8 +11131,10 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
         self.BeaconPosition()
         new_onboard_logs = sorted(self.log_list())
 
+        self.reboot_sitl()
+
         log_difference = [x for x in new_onboard_logs if x not in old_onboard_logs]
-        return log_difference[2]
+        return log_difference[1] # index depends on the reboots and ordering thereof in BeaconPosition!
 
     def test_replay_optical_flow_bit(self):
         self.set_parameters({
@@ -12165,6 +12762,7 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
              self.Landing,
              self.PrecisionLanding,
              self.SetModesViaModeSwitch,
+             self.BackupFence,
              self.SetModesViaAuxSwitch,
              self.AuxSwitchOptions,
              self.AuxFunctionsInMission,
@@ -12185,6 +12783,7 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
              self.GCSFailsafe,
              self.CustomController,
              self.WPArcs,
+             self.WPArcs2,
         ])
         return ret
 
@@ -12297,7 +12896,8 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
              self.PAUSE_CONTINUE_GUIDED,
              self.RichenPower,
              self.IE24,
-             self.Loweheiser,
+             self.LoweheiserAuto,
+             self.LoweheiserManual,
              self.MAVLandedStateTakeoff,
              self.Weathervane,
              self.MAV_CMD_AIRFRAME_CONFIGURATION,
@@ -12347,6 +12947,100 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
 
         self.context_pop()
         self.reboot_sitl()
+
+    def ScriptMountAllModes(self):
+        '''test location from all mount modes using the scripting backend'''
+
+        # enable scripting and set mount type to scripting
+        self.set_parameters({
+            "SCR_ENABLE": 1,
+            "MNT1_TYPE": 9,
+        })
+        self.reboot_sitl()
+
+        # install get-target-location-mount-backend.lua script
+        self.install_example_script_context('get-target-location-mount-backend.lua')
+        self.reboot_sitl()
+        self.takeoff(50)
+
+        self.context_collect("STATUSTEXT")
+
+        self.start_subtest("Test RETRACT (mode 0)")
+        self.run_cmd(
+            mavutil.mavlink.MAV_CMD_DO_MOUNT_CONTROL,
+            p7=mavutil.mavlink.MAV_MOUNT_MODE_RETRACT,
+        )
+        self.wait_statustext("Mode 0: No target", check_context=True)
+
+        self.start_subtest("Test NEUTRAL (mode 1)")
+        self.run_cmd(
+            mavutil.mavlink.MAV_CMD_DO_MOUNT_CONTROL,
+            p7=mavutil.mavlink.MAV_MOUNT_MODE_NEUTRAL,
+        )
+        self.wait_statustext("Mode 1: No target", check_context=True)
+
+        self.start_subtest("Test MAVLINK_TARGETING (mode 2)")
+        self.run_cmd(
+            mavutil.mavlink.MAV_CMD_DO_MOUNT_CONTROL,
+            p7=mavutil.mavlink.MAV_MOUNT_MODE_MAVLINK_TARGETING,
+        )
+        self.wait_statustext("Mode 2: No target", check_context=True)
+
+        self.start_subtest("Test RC_TARGETING (mode 3)")
+        self.run_cmd(
+            mavutil.mavlink.MAV_CMD_DO_MOUNT_CONTROL,
+            p7=mavutil.mavlink.MAV_MOUNT_MODE_RC_TARGETING,
+        )
+        self.wait_statustext("Mode 3: No target", check_context=True)
+
+        self.start_subtest("Test GPS_POINT (mode 4)")
+        roi_lat = -35.363150
+        roi_lng = 149.165320
+        roi_alt = 580.0
+
+        self.run_cmd_int(
+            mavutil.mavlink.MAV_CMD_DO_SET_ROI_LOCATION,
+            p5=int(roi_lat * 1e7),
+            p6=int(roi_lng * 1e7),
+            p7=roi_alt,
+            frame=mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
+        )
+
+        expected_roi_lat = f"{roi_lat:.3f}"
+        expected_roi_lng = f"{roi_lng:.3f}"
+
+        self.wait_statustext(
+            rf"Mode 4:.*{expected_roi_lat}.*{expected_roi_lng}",
+            check_context=True,
+            regex=True,
+        )
+
+        self.start_subtest("Test SYSID_TARGET (mode 5)")
+        self.run_cmd(
+            mavutil.mavlink.MAV_CMD_DO_SET_ROI_SYSID,
+            p1=self.mav.source_system,
+        )
+        # Single-vehicle SITL, SYSID_TARGET has no target to track
+        self.wait_statustext("Mode 5: No target", check_context=True)
+
+        self.start_subtest("Test HOME_LOCATION (mode 6)")
+        loc_home = self.poll_home_position()
+
+        expected_lat = f"{loc_home.latitude/1e7:.6f}"
+        expected_lng = f"{loc_home.longitude/1e7:.6f}"
+
+        self.run_cmd(
+            mavutil.mavlink.MAV_CMD_DO_MOUNT_CONTROL,
+            p7=mavutil.mavlink.MAV_MOUNT_MODE_HOME_LOCATION,
+        )
+
+        self.wait_statustext(
+            rf"Mode 6:.*{expected_lat}.*{expected_lng}",
+            check_context=True,
+            regex=True,
+        )
+
+        self.do_RTL()
 
     def ScriptCopterPosOffsets(self):
         '''test the copter-posoffset.lua example script'''
@@ -12690,7 +13384,7 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
 
     def BrakeZ(self):
         '''check jerk limit correct in Brake mode'''
-        self.set_parameter('PSC_JERK_Z', 3)
+        self.set_parameter('PSC_JERK_D', 3)
         self.takeoff(50, mode='GUIDED')
         vx, vy, vz_up = (0, 0, -1)
         self.test_guided_local_velocity_target(vx=vx, vy=vy, vz_up=vz_up, timeout=10)
@@ -12839,7 +13533,7 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
 
         self.land_and_disarm()
 
-    def start_flying_simple_rehome_mission(self, items):
+    def start_flying_simple_relhome_mission(self, items):
         '''uploads items, changes mode to auto, waits ready to arm and arms
         vehicle.  If the first item it a takeoff you can expect the
         vehicle to fly after this method returns
@@ -12855,7 +13549,7 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
 
     def _MAV_CMD_DO_LAND_START(self, run_cmd):
         alt = 5
-        self.start_flying_simple_rehome_mission([
+        self.start_flying_simple_relhome_mission([
             (mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, alt),
             (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 200, 0, alt),
             (mavutil.mavlink.MAV_CMD_NAV_LAND, 0, 0, 0),
@@ -13066,7 +13760,7 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
             "RC7_OPTION": 220,  # RC7 used for second param tuning
             "RC7_MIN": RC7_MIN,
             "RC7_MAX": RC7_MAX,
-            "TUNE2": 28,        # PSC_VELXY_I
+            "TUNE2": 28,        # PSC_NE_VEL_I
             "TUNE2_MIN":  TUNE2_MIN,
             "TUNE2_MAX":  TUNE2_MAX,
         })
@@ -13092,18 +13786,18 @@ class AutoTestCopter(vehicle_test_suite.TestSuite):
 
         self.set_rc(7, RC7_MIN)
         self.delay_sim_time(1)
-        self.assert_parameter_value("PSC_VELXY_I", TUNE2_MIN)
+        self.assert_parameter_value("PSC_NE_VEL_I", TUNE2_MIN)
 
         self.set_rc(7, RC7_MAX)
         self.delay_sim_time(1)
-        self.assert_parameter_value("PSC_VELXY_I", TUNE2_MAX)
+        self.assert_parameter_value("PSC_NE_VEL_I", TUNE2_MAX)
 
         # make sure RC6 is unaffected:
         self.assert_parameter_value("LOIT_SPEED", int((TUNE_MIN+TUNE_MAX)/2), epsilon=1)
 
         self.set_rc(7, int((RC7_MIN+RC7_MAX)/2))
         self.delay_sim_time(1)
-        self.assert_parameter_value("PSC_VELXY_I", int((TUNE2_MIN+TUNE2_MAX)/2), epsilon=1)
+        self.assert_parameter_value("PSC_NE_VEL_I", int((TUNE2_MIN+TUNE2_MAX)/2), epsilon=1)
 
     def PILOT_THR_BHV(self):
         '''test the PILOT_THR_BHV parameter'''
@@ -14033,6 +14727,51 @@ RTL_ALT 111
 
         self.do_RTL(timeout=600)
 
+    def mission_NAV_LOITER_TURNS(self):
+        '''test that loiter turns basically works'''
+        self.upload_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 20),
+            self.create_MISSION_ITEM_INT(
+                mavutil.mavlink.MAV_CMD_NAV_LOITER_TURNS,
+                p1=1,
+                p3=30,
+                z=30,  # circle is 10m higher than takeoff
+                frame=mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
+            ),
+            (mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH, 0, 0, 0),
+        ])
+        self.change_mode('AUTO')
+        self.set_parameter('AUTO_OPTIONS', 3)
+        self.wait_ready_to_arm()
+        self.arm_vehicle()
+        self.wait_disarmed()
+
+    def mission_NAV_LOITER_TURNS_off_center(self):
+        '''test that loiter turns basically works - copter on edge of circle'''
+        self.start_subtest("Start circle when on edge of circle")
+        radius = 30
+        self.wait_ready_to_arm()
+        here = self.mav.location()
+        circle_centre_loc = self.offset_location_ne(here, radius, 0)
+        self.upload_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 20),
+            self.create_MISSION_ITEM_INT(
+                mavutil.mavlink.MAV_CMD_NAV_LOITER_TURNS,
+                p1=1,
+                p3=radius,
+                x=int(circle_centre_loc.lat*1e7),
+                y=int(circle_centre_loc.lng*1e7),
+                z=30,  # circle is 10m higher than takeoff
+                frame=mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
+            ),
+            (mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH, 0, 0, 0),
+        ])
+        self.change_mode('AUTO')
+        self.set_parameter('AUTO_OPTIONS', 3)
+        self.wait_ready_to_arm()
+        self.arm_vehicle()
+        self.wait_disarmed()
+
     def AHRSAutoTrim(self):
         '''calibrate AHRS trim using RC input'''
         self.progress("Making earth frame same as body frame")  # because I'm lazy
@@ -14830,6 +15569,8 @@ return update, 1000
             self.DynamicRpmNotches, # Do not add attempts to this - failure is sign of a bug
             self.DynamicRpmNotchesRateThread,
             self.PIDNotches,
+            self.mission_NAV_LOITER_TURNS,
+            self.mission_NAV_LOITER_TURNS_off_center,
             self.StaticNotches,
             self.LuaParamSet,
             self.RefindGPS,
@@ -14841,6 +15582,7 @@ return update, 1000
             self.GyroFFTPostFilter,
             self.GyroFFTMotorNoiseCheck,
             self.CompassReordering,
+            self.SixCompassCalibrationAndReordering,
             self.CRSF,
             self.MotorTest,
             self.AltEstimation,
@@ -14893,6 +15635,7 @@ return update, 1000
             self.TerrainDBPreArm,
             self.ThrottleGainBoost,
             self.ScriptMountPOI,
+            self.ScriptMountAllModes,
             self.ScriptCopterPosOffsets,
             self.MountSolo,
             self.FlyMissionTwice,
